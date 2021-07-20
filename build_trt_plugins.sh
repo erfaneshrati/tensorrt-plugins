@@ -7,4 +7,4 @@ cd $_ && cmake .. && make
 mkdir -p /opt/tritonserver/trt_plugins
 mv libyoloplugin.so $_
 # Clean up
-apt-get remove --purge --yes git make cmake
+apt-get remove --purge --yes git cmake
