@@ -9,7 +9,7 @@
 #define NMS_THRESH 0.4
 #define CONF_THRESH 0.5
 #define BATCH_SIZE 1
-#define KEEP_TOPK 20
+#define KEEP_TOPK 100
 
 #define NET s // s m l x
 #define NETSTRUCT(str) createEngine_##str
@@ -21,11 +21,11 @@
 static const int INPUT_H = Yolo::INPUT_H;
 static const int INPUT_W = Yolo::INPUT_W;
 static const int CLASS_NUM = Yolo::CLASS_NUM;
-const char *INPUT_NAME = "data";
+const char *INPUT_NAME = "images";
 const char *OUTPUT_COUNTS = "count";
-const char *OUTPUT_BOXES = "box";
-const char *OUTPUT_SCORES = "score";
-const char *OUTPUT_CLASSES = "class";
+const char *OUTPUT_BOXES = "predicted_det_bboxes";
+const char *OUTPUT_SCORES = "predicted_det_scores";
+const char *OUTPUT_CLASSES = "predicted_det_labels";
 
 static Logger gLogger;
 
@@ -50,13 +50,26 @@ ICudaEngine *createEngine_s(unsigned int maxBatchSize, IBuilder *builder, IBuild
     INetworkDefinition* network = builder->createNetworkV2(0U);
 
     // Create input tensor of shape {3, INPUT_H, INPUT_W} with name INPUT_BLOB_NAME
-    ITensor* data = network->addInput(INPUT_NAME, dt, Dims3{ 3, INPUT_H, INPUT_W });
+    ITensor* data = network->addInput(INPUT_NAME, dt, Dims3{ INPUT_H, INPUT_W, 3 });
     assert(data);
+    // NHWC to NCHW
+    IShuffleLayer* shuffle = network->addShuffle(*data);
+    shuffle->setSecondTranspose(Permutation{2, 0, 1});
+
+    // Normalize.
+    float _scale = 1. / 255;
+    float _shift = 0.f;
+    float _power = 1.f;
+    nvinfer1::Weights scale{nvinfer1::DataType::kFLOAT, &_scale, 1};
+    nvinfer1::Weights shift{nvinfer1::DataType::kFLOAT, &_shift, 1};
+    nvinfer1::Weights power{nvinfer1::DataType::kFLOAT, &_power, 1};
+
+    auto scale_layer = network->addScale(*shuffle->getOutput(0), nvinfer1::ScaleMode::kUNIFORM, shift, scale, power);
 
     std::map<std::string, Weights> weightMap = loadWeights("../yolov5s.wts");
 
     /* ------ yolov5 backbone------ */
-    auto focus0 = focus(network, weightMap, *data, 3, get_width(64, gw), 3, "model.0");
+    auto focus0 = focus(network, weightMap, *scale_layer->getOutput(0), 3, get_width(64, gw), 3, "model.0");
     auto conv1 = convBlock(network, weightMap, *focus0->getOutput(0), get_width(128, gw), 3, 2, 1, "model.1");
     auto bottleneck_CSP2 = C3(network, weightMap, *conv1->getOutput(0), get_width(128, gw), get_width(128, gw), get_depth(3, gd), true, 1, 0.5, "model.2");
     auto conv3 = convBlock(network, weightMap, *bottleneck_CSP2->getOutput(0), get_width(256, gw), 3, 2, 1, "model.3");
@@ -107,8 +120,8 @@ ICudaEngine *createEngine_s(unsigned int maxBatchSize, IBuilder *builder, IBuild
 
     auto nms = addBatchedNMSLayer(network, yolo, Yolo::CLASS_NUM, Yolo::MAX_OUTPUT_BBOX_COUNT, KEEP_TOPK, CONF_THRESH, NMS_THRESH);
 
-    nms->getOutput(0)->setName(OUTPUT_COUNTS);
-    network->markOutput(*nms->getOutput(0));
+//    nms->getOutput(0)->setName(OUTPUT_COUNTS);
+//    network->markOutput(*nms->getOutput(0));
 
     nms->getOutput(1)->setName(OUTPUT_BOXES);
     network->markOutput(*nms->getOutput(1));
