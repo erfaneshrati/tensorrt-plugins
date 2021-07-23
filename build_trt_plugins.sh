@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build YoloV5 TensorRT Plugins
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install --yes git make cmake
+DEBIAN_FRONTEND=noninteractive apt-get install --yes make cmake
 mkdir -p `dirname $0`/yolov5/build
 cd $_ && cmake .. && make
 mkdir -p /opt/tritonserver/trt_plugins
