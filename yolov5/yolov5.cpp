@@ -126,11 +126,15 @@ ICudaEngine *createEngine_s(unsigned int maxBatchSize, IBuilder *builder, IBuild
     nms->getOutput(1)->setName(OUTPUT_BOXES);
     network->markOutput(*nms->getOutput(1));
 
-    nms->getOutput(2)->setName(OUTPUT_SCORES);
-    network->markOutput(*nms->getOutput(2));
+    IShuffleLayer* shuffle_scores = network->addShuffle(*nms->getOutput(2));
+    shuffle_scores->setReshapeDimensions(Dims2{KEEP_TOPK, 1});
+    shuffle_scores->getOutput(0)->setName(OUTPUT_SCORES);
+    network->markOutput(*shuffle_scores->getOutput(0));
 
-    nms->getOutput(3)->setName(OUTPUT_CLASSES);
-    network->markOutput(*nms->getOutput(3));
+    IShuffleLayer* shuffle_classes = network->addShuffle(*nms->getOutput(3));
+    shuffle_classes->setReshapeDimensions(Dims2{KEEP_TOPK, 1});
+    shuffle_classes->getOutput(0)->setName(OUTPUT_CLASSES);
+    network->markOutput(*shuffle_classes->getOutput(0));
 
     // Build engine
     builder->setMaxBatchSize(maxBatchSize);
