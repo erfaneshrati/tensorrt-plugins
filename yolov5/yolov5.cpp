@@ -123,18 +123,64 @@ ICudaEngine *createEngine_s(unsigned int maxBatchSize, IBuilder *builder, IBuild
 //    nms->getOutput(0)->setName(OUTPUT_COUNTS);
 //    network->markOutput(*nms->getOutput(0));
 
-    nms->getOutput(1)->setName(OUTPUT_BOXES);
-    network->markOutput(*nms->getOutput(1));
+    std::vector<float> normalize_bbox_mask(KEEP_TOPK*4, 0.0);
+    for (unsigned index = 0; index < normalize_bbox_mask.size(); index++)
+      if (index%2==0) normalize_bbox_mask[index]=static_cast<float>(INPUT_W);
+      else normalize_bbox_mask[index]=static_cast<float>(INPUT_H);
+    Weights normalize_bbox_mat{DataType::kFLOAT, normalize_bbox_mask.data(), (int64_t) normalize_bbox_mask.size()};
+    IConstantLayer * normalize_bbox_layer = network->addConstant(Dims2(KEEP_TOPK, 4), normalize_bbox_mat);
+    IElementWiseLayer* normalized_bboxes = network->addElementWise(*nms->getOutput(1), *normalize_bbox_layer->getOutput(0), ElementWiseOperation::kDIV);
+
+//    nms->getOutput(1)->setName("test3");
+//    network->markOutput(*nms->getOutput(1));
+
+    // Convert x1,y1,x2,y2 to x1,y1,w,h
+    std::vector<float> mask_bboxes(KEEP_TOPK*4, 0.0);
+    for (unsigned index = 0; index < mask_bboxes.size(); index++)
+      if (index%4==0 || index%4==1) mask_bboxes[index]=-1.0;
+    Weights mask_bboxes_mat{DataType::kFLOAT, mask_bboxes.data(), (int64_t) mask_bboxes.size()};
+    IConstantLayer * mask_bboxes_layer = network->addConstant(Dims2(KEEP_TOPK, 4), mask_bboxes_mat);
+    IElementWiseLayer* masked_bboxes = network->addElementWise(*normalized_bboxes->getOutput(0), *mask_bboxes_layer->getOutput(0), ElementWiseOperation::kPROD);
+
+//    masked_bboxes->getOutput(0)->setName("test1");
+//    network->markOutput(*masked_bboxes->getOutput(0));
+
+    std::vector<float> rotation_cols(4*4, 0.0);
+    rotation_cols[2]=1.0;
+    rotation_cols[7]=1.0;
+    rotation_cols[8]=1.0;
+    rotation_cols[13]=1.0;
+    Weights rotation_cols_mat{DataType::kFLOAT, rotation_cols.data(), (int64_t) rotation_cols.size()};
+    IConstantLayer * rotation_cols_mat_layer = network->addConstant(Dims2(4, 4), rotation_cols_mat);
+    IMatrixMultiplyLayer * rotated_cols = network->addMatrixMultiply(*masked_bboxes->getOutput(0), MatrixOperation::kNONE,*rotation_cols_mat_layer->getOutput(0),MatrixOperation::kNONE);
+
+//    rotated_cols->getOutput(0)->setName("test2");
+//    network->markOutput(*rotated_cols->getOutput(0));
+
+    IElementWiseLayer* masked_bboxes_xywh = network->addElementWise(*normalized_bboxes->getOutput(0), *rotated_cols->getOutput(0), ElementWiseOperation::kSUM);
+    masked_bboxes_xywh->getOutput(0)->setName(OUTPUT_BOXES);
+    network->markOutput(*masked_bboxes_xywh->getOutput(0));
 
     IShuffleLayer* shuffle_scores = network->addShuffle(*nms->getOutput(2));
     shuffle_scores->setReshapeDimensions(Dims2{KEEP_TOPK, 1});
     shuffle_scores->getOutput(0)->setName(OUTPUT_SCORES);
     network->markOutput(*shuffle_scores->getOutput(0));
 
+    // Convert predicted classes format
     IShuffleLayer* shuffle_classes = network->addShuffle(*nms->getOutput(3));
-    shuffle_classes->setReshapeDimensions(Dims2{KEEP_TOPK, 1});
-    shuffle_classes->getOutput(0)->setName(OUTPUT_CLASSES);
-    network->markOutput(*shuffle_classes->getOutput(0));
+    shuffle_classes->setReshapeDimensions(Dims3{KEEP_TOPK, 1, 1});
+    float _scale_shuffle_class = 1.f;
+    float _shift_shuffle_class = 1.f;
+    float _power_shuffle_class = 1.f;
+    nvinfer1::Weights scale_shuffle_class{nvinfer1::DataType::kFLOAT, &_scale_shuffle_class, 1};
+    nvinfer1::Weights shift_shuffle_class{nvinfer1::DataType::kFLOAT, &_shift_shuffle_class, 1};
+    nvinfer1::Weights power_shuffle_class{nvinfer1::DataType::kFLOAT, &_power_shuffle_class, 1};
+    auto scale_classes = network->addScale(*shuffle_classes->getOutput(0), nvinfer1::ScaleMode::kUNIFORM, shift_shuffle_class, scale_shuffle_class, power_shuffle_class);
+    IShuffleLayer* shuffle_classes_2 = network->addShuffle(*scale_classes->getOutput(0));
+    shuffle_classes_2->setReshapeDimensions(Dims2{KEEP_TOPK, 1});
+    shuffle_classes_2->getOutput(0)->setName(OUTPUT_CLASSES);
+//    shuffle_classes_2->getOutput(0)->setType(DataType::kINT32);
+    network->markOutput(*shuffle_classes_2->getOutput(0));
 
     // Build engine
     builder->setMaxBatchSize(maxBatchSize);

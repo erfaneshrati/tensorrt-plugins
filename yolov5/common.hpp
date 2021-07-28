@@ -296,7 +296,7 @@ IPluginV2Layer *addYoLoLayer(INetworkDefinition *network, std::map<std::string, 
     return yolo;
 }
 
-IPluginV2Layer *addBatchedNMSLayer(INetworkDefinition *network, IPluginV2Layer *yolo, int num_classes, int top_k, int keep_top_k, float score_thresh, float iou_thresh, bool is_normalized = false, bool clip_boxes = false)
+IPluginV2Layer *addBatchedNMSLayer(INetworkDefinition *network, IPluginV2Layer *yolo, int num_classes, int top_k, int keep_top_k, float score_thresh, float iou_thresh, int is_normalized = 0, int clip_boxes = 0)
 {
     auto creator = getPluginRegistry()->getPluginCreator("BatchedNMS_TRT", "1");
     // Set plugin fields and the field collection
